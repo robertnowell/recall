@@ -1,0 +1,17 @@
+# ---- PRIVATE DATA — never commit (this is your conversation history) ----
+history.db
+history.db-shm
+history.db-wal
+usage.jsonl
+refresh.log
+*.log
+
+# ---- env / build ----
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# ---- backups / scratch ----
+*.bak
+*.bak-*
