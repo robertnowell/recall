@@ -8,6 +8,13 @@ ROOT = os.path.expanduser("~/.claude/projects")
 HERE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(HERE, "..", "history.db")
 
+NOISE_PREFIXES = ("<task-notification", "[image", "[request interrupted", "<system-reminder",
+                  "<local-command", "caveat: the messages below", "this session is being continued",
+                  "<command-", "[tool ")
+def is_noise(t):
+    tl = t.lstrip().lower()
+    return any(tl.startswith(p) for p in NOISE_PREFIXES)
+
 def extract_text(content):
     if isinstance(content, str):
         return content
@@ -47,6 +54,8 @@ def main():
                     role = msg.get("role") or o.get("type")
                     txt = extract_text(msg.get("content")).strip()
                     if len(txt) < 12 or (txt.startswith("<") and "command-name" in txt[:60]):
+                        continue
+                    if is_noise(txt):
                         continue
                     chash = hashlib.sha1(txt.encode("utf-8", "ignore")).hexdigest()
                     key = f"{sess}|{chash}"

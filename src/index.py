@@ -6,6 +6,13 @@ import os, sys, json, sqlite3, glob, hashlib, re
 ROOT = os.path.expanduser("~/.claude/projects")
 DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "history.db")
 
+NOISE_PREFIXES = ("<task-notification", "[image", "[request interrupted", "<system-reminder",
+                  "<local-command", "caveat: the messages below", "this session is being continued",
+                  "<command-", "[tool ")
+def is_noise(t):
+    tl = t.lstrip().lower()
+    return any(tl.startswith(p) for p in NOISE_PREFIXES)
+
 def extract_text(content):
     if isinstance(content, str):
         return content
@@ -56,6 +63,8 @@ def main():
                         continue
                     if txt.startswith("<") and "command-name" in txt[:60]:
                         continue                # skip slash-command echoes
+                    if is_noise(txt):
+                        continue                # skip tool/system/notification noise
                     ts = o.get("timestamp", "") or ""
                     ym = ts[:7] if len(ts) >= 7 else "unknown"
                     chash = hashlib.sha1(txt.encode("utf-8", "ignore")).hexdigest()
