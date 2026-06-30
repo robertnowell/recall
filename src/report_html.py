@@ -18,8 +18,8 @@ if os.path.exists(USAGE):
 eager  = [e for e in ev if e.get("tool") == "eager_inject"]
 pulls  = [e for e in ev if e.get("tool") == "search_history"]
 digest = [e for e in ev if e.get("tool") == "digest_injected"]
-rich   = [e for e in eager if "prompt" in e]
-thin   = len(eager) - len(rich)
+shown   = [e for e in eager if e.get("injected")]   # only the labeled-provenance format
+omitted = len(eager) - len(shown)                   # legacy pre-redesign fires (unlabeled)
 
 byday = collections.defaultdict(lambda: collections.Counter())
 for e in ev:
@@ -40,22 +40,17 @@ def type_color(line):
     return "#cfcabb"
 
 rows = []
-for e in reversed(rich):
+for e in reversed(shown):
     sc = e.get("sem_top", e.get("top_score"))
-    if e.get("injected"):                                  # new labeled format
-        surfaced = "".join(
-            f'<li><span class="snip" style="color:{type_color(ln)}">{esc(ln)}</span></li>'
-            for ln in e["injected"].splitlines())
-    else:                                                  # legacy format
-        surfaced = "".join(
-            f'<li><span class="sc" style="color:{score_color(h.get("score"))}">{(h.get("score") or 0):.2f}</span>'
-            f'<span class="proj">{esc(h["project"].replace("-Users-robertnowell-Projects-","").replace("-Users-robertnowell","(home)"))}</span>'
-            f'<span class="snip">{esc(h.get("snippet",""))}</span></li>'
-            for h in e.get("surfaced", []))
-    topline = f'<span class="top" style="color:{score_color(sc)}">sem {sc:.2f}</span>' if sc else ''
+    surfaced = "".join(
+        f'<li><span class="snip" style="color:{type_color(ln)}">{esc(ln)}</span></li>'
+        for ln in e["injected"].splitlines())
+    topline = f'<span class="top" style="color:{score_color(sc)}">top semantic {sc:.2f}</span>' if sc else ''
     rows.append(f'''<div class="fire">
       <div class="meta"><span class="ts">{esc(e.get("ts","")[:16])}</span>{topline}</div>
+      <div class="q-label">your prompt</div>
       <div class="prompt">{esc(e.get("prompt",""))}</div>
+      <div class="s-label">surfaced past sessions (tagged by how each matched)</div>
       <ul class="surf">{surfaced}</ul></div>''')
 
 daygrid = "".join(
@@ -63,7 +58,7 @@ daygrid = "".join(
     for d in sorted(byday) if d)
 
 span = f'{eager[0]["ts"][:16]} → {eager[-1]["ts"][:16]}' if eager else "—"
-note = f'<p class="note">{thin} older fires logged before rich logging (no prompt/snippet captured) — not shown.</p>' if thin else ""
+note = f'<p class="note">{omitted} earlier fires hidden — they were logged before the labeled-provenance redesign (bare fragments, no match types). Shown below: the {len(shown)} fires logged in the new format.</p>' if omitted else ""
 
 doc = f'''<!doctype html><html><head><meta charset="utf-8"><title>recall · activity</title>
 <style>
@@ -80,14 +75,20 @@ td,th{{border:1px solid var(--line);padding:5px 12px;text-align:left}} th{{color
 .meta{{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:6px}}
 .prompt{{color:var(--ink);margin:0 0 10px;font-weight:500}}
 .prompt:before{{content:"› ";color:var(--ikb)}}
-.surf{{list-style:none;margin:0;padding:0}}
-.surf li{{display:flex;gap:10px;padding:3px 0;border-top:1px solid var(--line);font-size:13px;align-items:baseline}}
-.sc{{flex:0 0 38px;font-weight:600}} .proj{{flex:0 0 64px;color:var(--dim)}} .snip{{color:#cfcabb}}
-.note{{color:var(--dim);font-size:12px}} .legend{{color:var(--dim);font-size:12px;margin:18px 0 0}}
-.legend b{{color:#3a7afe}} .legend i{{color:#d8a13a;font-style:normal}}
+.q-label,.s-label{{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--dim);margin:0 0 2px}}
+.s-label{{margin-top:8px}}
+.surf{{list-style:none;margin:2px 0 0;padding:0}}
+.surf li{{padding:3px 0;border-top:1px solid var(--line);font-size:13px}}
+.snip{{color:#cfcabb}}
+.intro{{color:var(--dim);font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 16px;margin:0 0 20px}}
+.note{{color:var(--dim);font-size:12px}} .legend{{color:var(--dim);font-size:12px;margin:14px 0 16px}}
+.legend b{{color:#3a7afe}} .legend i{{color:#d8a13a;font-style:normal}} .legend em{{color:#5bc0a8;font-style:normal}}
 </style></head><body>
 <h1>recall · activity</h1>
 <p class="sub">{span}</p>
+<div class="intro"><b>What this shows:</b> every time you sent a prompt and recall auto-injected
+relevant past sessions into Claude's context (a "fire"). Each fire = your prompt + the past
+sessions it surfaced, tagged by <b>how</b> each one matched.</div>
 <div class="stats">
   <div class="stat"><div class="n">{len(eager)}</div><div class="l">eager fires</div></div>
   <div class="stat"><div class="n">{len(digest)}</div><div class="l">digests</div></div>
@@ -97,8 +98,8 @@ td,th{{border:1px solid var(--line);padding:5px 12px;text-align:left}} th{{color
 <table><tr><th>day</th><th>eager</th><th>digest</th><th>pull</th></tr>{daygrid}</table>
 {note}
 <h1>recent fires <span style="color:var(--dim);font-weight:400">— what it surfaced, you judge</span></h1>
-<p class="legend">score: <b>≥0.70 strong</b> · <span style="color:#5bc0a8">≥0.60 decent</span> · <i>0.55–0.60 marginal</i></p>
-{''.join(rows) or '<p class="note">no rich fires logged yet — use it in a fresh session and refresh.</p>'}
+<p class="legend">match type: <b>topic_match</b> = session's title · <em>semantic_match</em> = meaning/embedding · <i>grep_match</i> = exact keyword</p>
+{''.join(rows) or '<p class="note">no fires in the new labeled format yet — use recall in a fresh session, then re-run this report.</p>'}
 </body></html>'''
 
 open(OUT, "w").write(doc)
