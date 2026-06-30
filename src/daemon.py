@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """recall daemon — always-warm local HTTP search so the per-message hook is sub-second.
-Holds the embedding matrix in memory; the UserPromptSubmit hook hits /search instead of
-cold-loading 363MB every turn. Binds 127.0.0.1 only (never exposed off-box).
+Returns THREE labeled match modalities so the injection can show provenance:
+  semantic_match (embedding cosine) · grep_match (exact keyword) · topic_match (session title)
+Binds 127.0.0.1 only.
 
-  GET /search?q=<text>&k=3&exclude=<sess>   -> {"top_score":float,"hits":[{sess,project,ts,snippet,score}]}
-  GET /health                               -> {"ok":true,"docs":N}
+  GET /search?q=<text>&exclude=<sess>  -> {"sem_top":float,
+        "semantic":[{sess,project,ts,text,score}], "grep":[...], "topic":[{...,title}]}
+  GET /health -> {"ok":true,"docs":N,"titles":M}
 """
 import os, sys, json, re, collections
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -14,57 +16,85 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import search as core
 
 HOST, PORT = "127.0.0.1", int(os.environ.get("RECALL_PORT", "8787"))
-RRF_K = 60
-print("loading embeddings…", flush=True)
+STOP = core.STOP
+print("loading…", flush=True)
 _con, _ids, _M, _meta = core._load()
-print(f"ready: {_M.shape[0]:,} docs, dim {_M.shape[1]}", flush=True)
+# per-session: project + latest ts (for labeling topic/grep hits)
+_sess = {}
+for mid, (s, p, ts, _c) in _meta.items():
+    if s not in _sess or ts > _sess[s][1]:
+        _sess[s] = (p, ts)
+# titles (topic modality)
+_titles = {}
+try:
+    for s, t in _con.execute("SELECT sess, title FROM titles"):
+        _titles[s] = t
+except Exception:
+    pass
+print(f"ready: {_M.shape[0]:,} docs, {len(_titles)} titles", flush=True)
 
-def _search(q, k, exclude):
+def _toks(s):
+    return {t for t in re.findall(r"[a-z0-9]{3,}", s.lower()) if t not in STOP}
+
+def _snip(mid):
+    return re.sub(r"\s+", " ", _meta[mid][3]).strip()[:200]
+
+def _search(q, exclude, per=2):
     qv = core._embed(q)
-    sims = _M @ qv                         # cosine (rows are L2-normalized)
-    pool = max(k * 8, 60)
+    sims = _M @ qv
+    pool = 80
     dtop = np.argpartition(-sims, range(min(pool, len(sims))))[:pool]
     dtop = dtop[np.argsort(-sims[dtop])]
-    dense = [int(_ids[t]) for t in dtop]
-    bm = core._bm25(_con, q, None, pool)
-    sc = collections.defaultdict(float)
-    for lst in (bm, dense):
-        for r, mid in enumerate(lst):
-            sc[mid] += 1.0 / (RRF_K + r + 1)
-    ranked = sorted(sc, key=lambda m: -sc[m])
     cos = {int(_ids[i]): float(sims[i]) for i in dtop}
-    out, seen = [], set()
-    for mid in ranked:
-        s, p, ts, content = _meta[mid]
-        if s == exclude or s in seen:
-            continue
+    # semantic
+    semantic, seen = [], set()
+    for i in dtop:
+        mid = int(_ids[i]); s = _meta[mid][0]
+        if s == exclude or s in seen: continue
         seen.add(s)
-        out.append({"sess": s, "project": p, "ts": ts,
-                    "snippet": re.sub(r"\s+", " ", content).strip()[:200],
-                    "score": round(cos.get(mid, 0.0), 4)})
-        if len(out) >= k:
-            break
-    return {"top_score": out[0]["score"] if out else 0.0, "hits": out}
+        semantic.append({"sess": s, "project": _meta[mid][1], "ts": _meta[mid][2],
+                         "text": _snip(mid), "score": round(cos[mid], 4)})
+        if len(semantic) >= per: break
+    sem_top = semantic[0]["score"] if semantic else 0.0
+    # grep (BM25 exact-term)
+    grep, seen = [], set()
+    for mid in core._bm25(_con, q, None, pool):
+        s = _meta[mid][0]
+        if s == exclude or s in seen: continue
+        seen.add(s)
+        grep.append({"sess": s, "project": _meta[mid][1], "ts": _meta[mid][2],
+                     "text": _snip(mid), "score": round(cos.get(mid, 0.0), 4)})
+        if len(grep) >= per: break
+    # topic (session-title overlap)
+    qt = _toks(q)
+    scored = []
+    if qt:
+        for s, title in _titles.items():
+            if s == exclude or s not in _sess: continue
+            ov = qt & _toks(title)
+            if ov:
+                scored.append((len(ov), s, title))
+        scored.sort(reverse=True)
+    topic = [{"sess": s, "project": _sess[s][0], "ts": _sess[s][1], "title": title,
+              "text": title, "score": n} for n, s, title in scored[:per]]
+    return {"sem_top": sem_top, "semantic": semantic, "grep": grep, "topic": topic}
 
 class H(BaseHTTPRequestHandler):
-    def log_message(self, *a): pass          # quiet
+    def log_message(self, *a): pass
     def do_GET(self):
         u = urlparse(self.path); qs = parse_qs(u.query)
         try:
             if u.path == "/health":
-                body = {"ok": True, "docs": int(_M.shape[0])}
+                body = {"ok": True, "docs": int(_M.shape[0]), "titles": len(_titles)}
             elif u.path == "/search":
                 q = (qs.get("q", [""])[0]).strip()
-                k = int(qs.get("k", ["3"])[0])
-                exclude = qs.get("exclude", [""])[0]
-                body = _search(q, k, exclude) if q else {"top_score": 0.0, "hits": []}
+                body = _search(q, qs.get("exclude", [""])[0]) if q else {"sem_top": 0.0, "semantic": [], "grep": [], "topic": []}
             else:
                 self.send_response(404); self.end_headers(); return
             data = json.dumps(body).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers(); self.wfile.write(data)
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data))); self.end_headers()
+            self.wfile.write(data)
         except Exception as e:
             self.send_response(500); self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
