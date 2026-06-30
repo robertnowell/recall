@@ -77,7 +77,30 @@ def _search(q, exclude, per=2):
         scored.sort(reverse=True)
     topic = [{"sess": s, "project": _sess[s][0], "ts": _sess[s][1], "title": title,
               "text": title, "score": n} for n, s, title in scored[:per]]
-    return {"sem_top": sem_top, "semantic": semantic, "grep": grep, "topic": topic}
+
+    # ---- RRF fusion across all three modalities (shared strength metric) ----
+    K = 60
+    agg = {}
+    def fuse(items, tname):
+        for rank, it in enumerate(items):
+            s = it["sess"]
+            a = agg.setdefault(s, {"sess": s, "project": it["project"], "ts": it["ts"],
+                                   "types": [], "rrf": 0.0, "scores": {}, "texts": {}})
+            a["rrf"] += 1.0 / (K + rank + 1)
+            if tname not in a["types"]: a["types"].append(tname)
+            a["scores"][tname] = it.get("score")
+            a["texts"][tname] = it.get("text")
+    fuse(topic, "topic_match"); fuse(semantic, "semantic_match"); fuse(grep, "grep_match")
+    matches = []
+    for a in agg.values():
+        # display text: prefer the legible title, else the semantic passage, else the grep passage
+        txt = a["texts"].get("topic_match") or a["texts"].get("semantic_match") or a["texts"].get("grep_match")
+        matches.append({"sess": a["sess"], "project": a["project"], "ts": a["ts"],
+                        "types": a["types"], "rrf": round(a["rrf"], 5),
+                        "scores": a["scores"], "text": txt})
+    matches.sort(key=lambda x: -x["rrf"])
+    return {"sem_top": sem_top, "top_score": sem_top, "matches": matches,
+            "semantic": semantic, "grep": grep, "topic": topic}
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass

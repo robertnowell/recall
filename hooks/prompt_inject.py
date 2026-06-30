@@ -8,7 +8,7 @@ import os, sys, json, urllib.parse, urllib.request
 
 PORT = os.environ.get("RECALL_PORT", "8787")
 THRESHOLD = float(os.environ.get("RECALL_THRESHOLD", "0.55"))
-TIMEOUT = 1.0
+TIMEOUT = 1.5
 ACK = {"thanks","thank you","ok","okay","yes","yep","no","nope","go","sure","do it","cool",
        "nice","great","got it","continue","next","y","n","k","yeah","status","done","stop"}
 # system/tool messages that are NOT real user prompts — never fire on these
@@ -20,15 +20,16 @@ def trivial(p):
     return (len(s) < 20 or s in ACK or s.startswith("/")
             or any(s.startswith(pfx) for pfx in NOISE_PREFIXES))
 
-def line(item, mtype):
-    proj = item["project"].replace("-Users-robertnowell-Projects-", "").replace("-Users-robertnowell", "(home)")
-    when = item["ts"][:10]
-    text = item.get("text", "").replace("\n", " ").strip()
-    if mtype == "topic_match":
-        body = f'"{text}"'
-    else:
-        body = f'"…{text[:140]}…"'
-    return f'- {body}  — {proj} · {when} · sess={item["sess"]}  type="{mtype}"'
+MAX_LINES = 4
+
+def line(m):
+    proj = m["project"].replace("-Users-robertnowell-Projects-", "").replace("-Users-robertnowell", "(home)")
+    when = m["ts"][:10]
+    text = (m.get("text") or "").replace("\n", " ").strip()
+    types = m["types"]
+    # topic title is legible as-is; passages get ellipsis
+    body = f'"{text}"' if "topic_match" in types else f'"…{text[:140]}…"'
+    return f'- {body}  — {proj} · {when} · sess={m["sess"]}  type="{",".join(types)}"'
 
 def main():
     try:
@@ -47,27 +48,26 @@ def main():
     except Exception:
         sys.exit(0)
 
-    topic = res.get("topic", [])
-    # fire if a strong semantic match OR a session-title (topic) match exists
-    if res.get("sem_top", 0) < THRESHOLD and not topic:
+    matches = res.get("matches", [])
+    topic_present = any("topic_match" in m["types"] for m in matches)
+    # fire if a strong semantic match OR any session-title (topic) match exists
+    if res.get("sem_top", 0) < THRESHOLD and not topic_present:
         sys.exit(0)
 
-    lines, used = [], set()
-    for it in topic:                                   # topic first (most legible)
-        k = it["sess"] + it.get("text","")[:30]
-        if k in used: continue
-        used.add(k); lines.append(line(it, "topic_match"))
-    for it in res.get("semantic", []):
-        if it["score"] < THRESHOLD: continue
-        k = it["sess"] + it.get("text","")[:30]
-        if k in used: continue
-        used.add(k); lines.append(line(it, "semantic_match"))
-    for it in res.get("grep", []):
-        k = it["sess"] + it.get("text","")[:30]
-        if k in used: continue
-        used.add(k); lines.append(line(it, "grep_match"))
-    if not lines:
+    # matches arrive RRF-ordered (combined strength); drop weak semantic-only marginals
+    picked = []
+    for m in matches:
+        types = m["types"]
+        sem = m["scores"].get("semantic_match")
+        # a semantic-only hit must clear the bar; topic/grep hits earn their place
+        if types == ["semantic_match"] and (sem is None or sem < THRESHOLD):
+            continue
+        picked.append(m)
+        if len(picked) >= MAX_LINES:
+            break
+    if not picked:
         sys.exit(0)
+    lines = [line(m) for m in picked]
 
     ctx = ("the user's previous sessions may be relevant to this inquiry. Here are a few potential matches:\n"
            + "\n".join(lines)
@@ -78,7 +78,7 @@ def main():
         with open(os.path.expanduser("~/Projects/recall/usage.jsonl"), "a") as fh:
             fh.write(json.dumps({"tool": "eager_inject", "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                                  "session_id": sess, "prompt": prompt[:300], "sem_top": res.get("sem_top"),
-                                 "n_topic": len(topic), "n_lines": len(lines),
+                                 "n_lines": len(lines), "types": [m["types"] for m in picked],
                                  "injected": "\n".join(lines)}) + "\n")
     except Exception:
         pass
