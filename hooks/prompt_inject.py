@@ -75,7 +75,8 @@ def main():
         with open(os.path.expanduser("~/Projects/recall/usage.jsonl"), "a") as fh:
             fh.write(json.dumps({"tool": "eager_inject", "ts": datetime.datetime.now().isoformat(timespec="seconds"),
                                  "session_id": sess, "prompt": prompt[:300], "sem_top": res.get("sem_top"),
-                                 "n_topic": len(topic), "n_lines": len(lines)}) + "\n")
+                                 "n_topic": len(topic), "n_lines": len(lines),
+                                 "injected": "\n".join(lines)}) + "\n")
     except Exception:
         pass
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": ctx}}))

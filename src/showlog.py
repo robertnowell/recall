@@ -31,12 +31,16 @@ if thin:
 
 print(f"--- last {min(N, len(rich))} fires (newest first) ---")
 for e in reversed(rich[-N:]):
-    print(f"\n[{e['ts'][:16]}]  top_score={e.get('top_score'):.2f}")
+    sc = e.get("sem_top", e.get("top_score"))
+    print(f"\n[{e['ts'][:16]}]  sem_top={sc:.2f}" if sc else f"\n[{e['ts'][:16]}]")
     print(f"  your prompt: {e.get('prompt','')[:120]!r}")
-    print(f"  surfaced:")
-    for h in e.get("surfaced", []):
-        proj = h["project"].replace("-Users-robertnowell-Projects-", "").replace("-Users-robertnowell", "(home)")
-        print(f"    · {h.get('score'):.2f} [{proj}] {h['snippet'][:90]}")
+    if e.get("injected"):                         # new labeled format — show verbatim
+        for ln in e["injected"].splitlines():
+            print(f"    {ln}")
+    else:                                          # legacy format
+        for h in e.get("surfaced", []):
+            proj = h["project"].replace("-Users-robertnowell-Projects-", "").replace("-Users-robertnowell", "(home)")
+            print(f"    · {h.get('score'):.2f} [{proj}] {h['snippet'][:90]}")
 
 if rich:
     print("\n--- read it: for each fire, was the surfaced context actually relevant + the snippet useful?")
