@@ -46,12 +46,20 @@ def main():
     for h in hits:
         proj = h["project"].replace("-Users-robertnowell-Projects-", "").replace("-Users-robertnowell", "(home)")
         lines.append(f"- [{h['ts'][:10]}] {proj}: {h['snippet'][:160]}  (sess={h['sess']})")
-    # log for the eval (what fired, on what, how confident)
+    # log what fired, ON WHICH PROMPT, and WHAT it surfaced — so fires are reconstructable
+    # (both for your visible `recall log` review and for downstream did-it-help analysis)
     try:
         import datetime
         with open(os.path.expanduser("~/Projects/recall/usage.jsonl"), "a") as fh:
-            fh.write(json.dumps({"tool": "eager_inject", "top_score": res["top_score"],
-                                 "n": len(hits), "ts": datetime.datetime.now().isoformat(timespec="seconds")}) + "\n")
+            fh.write(json.dumps({
+                "tool": "eager_inject",
+                "ts": datetime.datetime.now().isoformat(timespec="seconds"),
+                "session_id": sess,
+                "prompt": prompt[:300],
+                "top_score": res["top_score"],
+                "surfaced": [{"sess": h["sess"], "score": h.get("score"),
+                              "project": h["project"], "snippet": h["snippet"][:160]} for h in hits],
+            }) + "\n")
     except Exception:
         pass
     print(json.dumps({"hookSpecificOutput": {

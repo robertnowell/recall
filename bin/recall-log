@@ -1,0 +1,2 @@
+#!/bin/bash
+exec "$HOME/Projects/recall/.venv/bin/python" "$HOME/Projects/recall/src/showlog.py" "$@"
