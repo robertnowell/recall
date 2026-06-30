@@ -33,17 +33,28 @@ def score_color(s):
 
 def esc(t): return html.escape(t or "")
 
+def type_color(line):
+    if 'type="topic_match"' in line: return "#3a7afe"
+    if 'type="semantic_match"' in line: return "#5bc0a8"
+    if 'type="grep_match"' in line: return "#d8a13a"
+    return "#cfcabb"
+
 rows = []
 for e in reversed(rich):
-    sc = e.get("top_score")
-    surfaced = "".join(
-        f'<li><span class="sc" style="color:{score_color(h.get("score"))}">{(h.get("score") or 0):.2f}</span>'
-        f'<span class="proj">{esc(h["project"].replace("-Users-robertnowell-Projects-","").replace("-Users-robertnowell","(home)"))}</span>'
-        f'<span class="snip">{esc(h.get("snippet",""))}</span></li>'
-        for h in e.get("surfaced", []))
+    sc = e.get("sem_top", e.get("top_score"))
+    if e.get("injected"):                                  # new labeled format
+        surfaced = "".join(
+            f'<li><span class="snip" style="color:{type_color(ln)}">{esc(ln)}</span></li>'
+            for ln in e["injected"].splitlines())
+    else:                                                  # legacy format
+        surfaced = "".join(
+            f'<li><span class="sc" style="color:{score_color(h.get("score"))}">{(h.get("score") or 0):.2f}</span>'
+            f'<span class="proj">{esc(h["project"].replace("-Users-robertnowell-Projects-","").replace("-Users-robertnowell","(home)"))}</span>'
+            f'<span class="snip">{esc(h.get("snippet",""))}</span></li>'
+            for h in e.get("surfaced", []))
+    topline = f'<span class="top" style="color:{score_color(sc)}">sem {sc:.2f}</span>' if sc else ''
     rows.append(f'''<div class="fire">
-      <div class="meta"><span class="ts">{esc(e.get("ts","")[:16])}</span>
-      <span class="top" style="color:{score_color(sc)}">top {sc:.2f}</span></div>
+      <div class="meta"><span class="ts">{esc(e.get("ts","")[:16])}</span>{topline}</div>
       <div class="prompt">{esc(e.get("prompt",""))}</div>
       <ul class="surf">{surfaced}</ul></div>''')
 
