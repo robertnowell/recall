@@ -45,7 +45,9 @@ for e in reversed(shown):
     surfaced = "".join(
         f'<li><span class="snip" style="color:{type_color(ln)}">{esc(ln)}</span></li>'
         for ln in e["injected"].splitlines())
-    topline = f'<span class="top" style="color:{score_color(sc)}">top semantic {sc:.2f}</span>' if sc else ''
+    if not surfaced:        # never show a fire with a score but no matches
+        continue
+    topline = f'<span class="top" style="color:{score_color(sc)}">top semantic match {sc:.2f}</span>' if sc else ''
     rows.append(f'''<div class="fire">
       <div class="meta"><span class="ts">{esc(e.get("ts","")[:16])}</span>{topline}</div>
       <div class="q-label">your prompt</div>

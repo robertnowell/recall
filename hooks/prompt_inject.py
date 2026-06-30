@@ -11,11 +11,14 @@ THRESHOLD = float(os.environ.get("RECALL_THRESHOLD", "0.55"))
 TIMEOUT = 1.0
 ACK = {"thanks","thank you","ok","okay","yes","yep","no","nope","go","sure","do it","cool",
        "nice","great","got it","continue","next","y","n","k","yeah","status","done","stop"}
+# system/tool messages that are NOT real user prompts — never fire on these
+NOISE_PREFIXES = ("<task-notification", "[image", "[request interrupted", "<system-reminder",
+                  "<local-command", "caveat:", "[tool ", "<command-")
 
 def trivial(p):
     s = p.strip().lower()
     return (len(s) < 20 or s in ACK or s.startswith("/")
-            or s.startswith("<command-") or s.startswith("[image"))
+            or any(s.startswith(pfx) for pfx in NOISE_PREFIXES))
 
 def line(item, mtype):
     proj = item["project"].replace("-Users-robertnowell-Projects-", "").replace("-Users-robertnowell", "(home)")
