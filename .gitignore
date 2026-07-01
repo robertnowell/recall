@@ -16,3 +16,4 @@ __pycache__/
 *.bak
 *.bak-*
 usage_report.html
+usage.jsonl.archive-*
