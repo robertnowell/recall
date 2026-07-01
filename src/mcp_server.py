@@ -54,14 +54,14 @@ def search_history(query: str, k: int = 8, mode: str = "hybrid") -> str:
 
 
 @mcp.tool()
-def get_session(sess: str, max_chars: int = 6000) -> str:
+def get_session(sess: str, max_chars: int = 8000) -> str:
     """Retrieve the full conversation text of a past session by its id (from search_history).
 
     Use after search_history when you need the actual content of a thread, not just the snippet.
 
     Args:
         sess: the session id returned by search_history.
-        max_chars: truncate the returned transcript to this many characters (default 6000).
+        max_chars: cap the returned transcript at this many characters (default 8000).
     """
     con = sqlite3.connect(core.DB)
     rows = con.execute(
@@ -70,15 +70,15 @@ def get_session(sess: str, max_chars: int = 6000) -> str:
     _log({"tool": "get_session", "sess": sess, "n_turns": len(rows)})
     if not rows:
         return f"No session found with id {sess!r}"
-    out, total = [], 0
-    proj = rows and ""
+    parts = []
     for role, ts, content in rows:
-        block = f"\n[{role} · {ts[:16]}]\n{re.sub(chr(10)+'{3,}', chr(10)+chr(10), content).strip()}"
-        if total + len(block) > max_chars:
-            out.append(f"\n…(truncated; raise max_chars to see more, {len(rows)} turns total)")
-            break
-        out.append(block); total += len(block)
-    return f"Session {sess} ({len(rows)} turns):\n" + "".join(out)
+        body = re.sub(r"\n{3,}", "\n\n", content).strip()
+        parts.append(f"\n[{role} · {ts[:16]}]\n{body}")
+    full = "".join(parts)
+    # truncate the assembled text (never drop a whole turn just because it's big)
+    if len(full) > max_chars:
+        full = full[:max_chars] + f"\n…(truncated at {max_chars} chars; {len(rows)} turns total — raise max_chars for more)"
+    return f"Session {sess} ({len(rows)} turns):\n{full}"
 
 
 if __name__ == "__main__":
